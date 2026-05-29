@@ -1,0 +1,348 @@
+#!/bin/bash
+# =============================================================================
+# Bulk Segregant Analysis - Alignment and GATK SNP Calling Pipeline
+# Solanum pennellii x Solanum pimpinellifolium F2 Population
+# Author: Jesus Iraheta
+# =============================================================================
+# Usage: bash 1_alignment_gatk_pipeline.sh
+# Dependencies: BWA-MEM, SAMtools, GATK4
+# =============================================================================
+
+# --- Paths ---
+REF="reference/Spenn_v2.fa"           # S. pennellii reference genome
+HIGH_BULK="data/high_bulk_R1.fastq.gz data/high_bulk_R2.fastq.gz"
+LOW_BULK="data/low_bulk_R1.fastq.gz data/low_bulk_R2.fastq.gz"
+OUTDIR="results/bam"
+GVCF_DIR="results/gvcf"
+mkdir -p $OUTDIR $GVCF_DIR
+
+# Chromosomes to parallelize over
+CHROMOSOMES=(Spenn-ch01 Spenn-ch02 Spenn-ch03 Spenn-ch04 Spenn-ch05 \
+             Spenn-ch06 Spenn-ch07 Spenn-ch08 Spenn-ch09 Spenn-ch10 \
+             Spenn-ch11 Spenn-ch12)
+
+# =============================================================================
+# STEP 1: Index reference genome
+# =============================================================================
+echo "Indexing reference genome..."
+bwa index $REF
+samtools faidx $REF
+gatk CreateSequenceDictionary -R $REF
+
+# =============================================================================
+# STEP 2: Align reads to reference with BWA-MEM
+# =============================================================================
+for SAMPLE in high_bulk low_bulk; do
+    echo "Aligning ${SAMPLE}..."
+
+    if [ "$SAMPLE" == "high_bulk" ]; then
+        R1=$(echo $HIGH_BULK | awk '{print $1}')
+        R2=$(echo $HIGH_BULK | awk '{print $2}')
+    else
+        R1=$(echo $LOW_BULK | awk '{print $1}')
+        R2=$(echo $LOW_BULK | awk '{print $2}')
+    fi
+
+    # Align with read group info
+    bwa mem -t 8 \
+        -R "@RG\tID:${SAMPLE}\tSM:${SAMPLE}\tPL:ILLUMINA\tLB:${SAMPLE}" \
+        $REF $R1 $R2 | \
+        samtools sort -o ${OUTDIR}/${SAMPLE}_sorted.bam
+
+    samtools index ${OUTDIR}/${SAMPLE}_sorted.bam
+    echo "Alignment complete for ${SAMPLE}"
+done
+
+# =============================================================================
+# STEP 3: Mark and remove duplicates
+# =============================================================================
+for SAMPLE in high_bulk low_bulk; do
+    echo "Marking duplicates for ${SAMPLE}..."
+
+    gatk MarkDuplicates \
+        -I ${OUTDIR}/${SAMPLE}_sorted.bam \
+        -O ${OUTDIR}/${SAMPLE}_dedup.bam \
+        -M ${OUTDIR}/${SAMPLE}_dup_metrics.txt \
+        --REMOVE_DUPLICATES true
+
+    samtools index ${OUTDIR}/${SAMPLE}_dedup.bam
+    echo "Duplicates marked for ${SAMPLE}"
+done
+
+# =============================================================================
+# STEP 4: Run GATK HaplotypeCaller per chromosome (parallelized)
+# =============================================================================
+echo "Running HaplotypeCaller per chromosome..."
+
+for CHR in "${CHROMOSOMES[@]}"; do
+    for SAMPLE in high_bulk low_bulk; do
+        echo "HaplotypeCaller: ${SAMPLE} - ${CHR}"
+
+        gatk HaplotypeCaller \
+            -R $REF \
+            -I ${OUTDIR}/${SAMPLE}_dedup.bam \
+            -O ${GVCF_DIR}/${SAMPLE}_${CHR}.g.vcf.gz \
+            -ERC GVCF \
+            -L $CHR \
+            --sample-name $SAMPLE &
+
+    done
+done
+wait
+echo "HaplotypeCaller complete for all chromosomes"
+
+# =============================================================================
+# STEP 5: Combine GVCFs and joint genotype per chromosome
+# =============================================================================
+VCF_DIR="results/vcf"
+mkdir -p $VCF_DIR
+
+for CHR in "${CHROMOSOMES[@]}"; do
+    echo "Combining and genotyping: ${CHR}"
+
+    # Combine per-sample GVCFs
+    gatk CombineGVCFs \
+        -R $REF \
+        -V ${GVCF_DIR}/high_bulk_${CHR}.g.vcf.gz \
+        -V ${GVCF_DIR}/low_bulk_${CHR}.g.vcf.gz \
+        -O ${GVCF_DIR}/combined_${CHR}.g.vcf.gz \
+        -L $CHR
+
+    # Joint genotyping
+    gatk GenotypeGVCFs \
+        -R $REF \
+        -V ${GVCF_DIR}/combined_${CHR}.g.vcf.gz \
+        -O ${VCF_DIR}/genotyped_${CHR}.vcf.gz \
+        -L $CHR
+
+    echo "Genotyping complete: ${CHR}"
+done
+
+echo "Pipeline complete. VCFs written to ${VCF_DIR}"
+#!/bin/bash
+# =============================================================================
+# Bulk Segregant Analysis - SNP Filtering
+# Solanum pennellii x Solanum pimpinellifolium F2 Population
+# Author: Jesus Iraheta
+# =============================================================================
+# Filters raw GATK VCFs to high-confidence SNPs for BSA
+# Filtering criteria (from report):
+#   - Total depth: 100-400x
+#   - Minimum sample depth: 40x
+#   - Genotype quality: 99
+# Input:  results/vcf/genotyped_*.vcf.gz (per chromosome)
+# Output: results/vcf/filtered_combined.table (BSA-ready)
+# =============================================================================
+
+REF="reference/Spenn_v2.fa"
+VCF_DIR="results/vcf"
+OUTDIR="results/filtered"
+mkdir -p $OUTDIR
+
+CHROMOSOMES=(Spenn-ch01 Spenn-ch02 Spenn-ch03 Spenn-ch04 Spenn-ch05 \
+             Spenn-ch06 Spenn-ch07 Spenn-ch08 Spenn-ch09 Spenn-ch10 \
+             Spenn-ch11 Spenn-ch12)
+
+# =============================================================================
+# STEP 1: Filter SNPs per chromosome
+# =============================================================================
+for CHR in "${CHROMOSOMES[@]}"; do
+    echo "Filtering SNPs: ${CHR}"
+
+    # Select SNPs only
+    gatk SelectVariants \
+        -R $REF \
+        -V ${VCF_DIR}/genotyped_${CHR}.vcf.gz \
+        --select-type-to-include SNP \
+        -O ${OUTDIR}/snps_${CHR}.vcf.gz
+
+    # Apply depth and genotype quality filters
+    gatk VariantFiltration \
+        -R $REF \
+        -V ${OUTDIR}/snps_${CHR}.vcf.gz \
+        --filter-expression "DP < 100 || DP > 400" --filter-name "DepthFilter" \
+        --filter-expression "GQ < 99" --filter-name "GQFilter" \
+        --genotype-filter-expression "DP < 40" --genotype-filter-name "SampleDepthFilter" \
+        -O ${OUTDIR}/filtered_${CHR}.vcf.gz
+
+    echo "Filtering complete: ${CHR}"
+done
+
+# =============================================================================
+# STEP 2: Merge filtered VCFs across chromosomes
+# =============================================================================
+echo "Merging filtered VCFs..."
+
+VCF_LIST=""
+for CHR in "${CHROMOSOMES[@]}"; do
+    VCF_LIST="$VCF_LIST -I ${OUTDIR}/filtered_${CHR}.vcf.gz"
+done
+
+gatk MergeVcfs \
+    $VCF_LIST \
+    -O ${OUTDIR}/filtered_merged.vcf.gz
+
+echo "Merged VCF written to ${OUTDIR}/filtered_merged.vcf.gz"
+
+# =============================================================================
+# STEP 3: Export to table format for QTLseqr
+# =============================================================================
+echo "Exporting to table format for QTLseqr..."
+
+gatk VariantsToTable \
+    -V ${OUTDIR}/filtered_merged.vcf.gz \
+    -F CHROM -F POS -F REF -F ALT \
+    -GF AD -GF DP -GF GQ -GF PL \
+    --show-filtered \
+    -O ${OUTDIR}/filtered_combined.table
+
+echo "Done! Table written to ${OUTDIR}/filtered_combined.table"
+echo "Total SNPs retained:"
+wc -l ${OUTDIR}/filtered_combined.table
+# =============================================================================
+# Bulk Segregant Analysis - QTLseqr ΔSNP-index Analysis
+# Solanum pennellii x Solanum pimpinellifolium F2 Population
+# Author: Jesus Iraheta
+# =============================================================================
+# Input:  results/filtered/filtered_combined.table (from GATK pipeline)
+# Output: QTL plots, SNP density plot, candidate region figures
+# =============================================================================
+
+library(QTLseqr)
+library(ggplot2)
+library(dplyr)
+
+# =============================================================================
+# 1. Load and prepare SNP table
+# =============================================================================
+# Sample names must match column headers in the GATK table
+HIGH_BULK <- "high_bulk"
+LOW_BULK  <- "low_bulk"
+
+snpTable <- importFromGATK(
+  file       = "results/filtered/filtered_combined.table",
+  highBulk   = HIGH_BULK,
+  lowBulk    = LOW_BULK,
+  chromList  = paste0("Spenn-ch0", 1:9, collapse = NULL)
+)
+
+# Append double-digit chromosomes
+chromList <- c(paste0("Spenn-ch0", 1:9), paste0("Spenn-ch", 10:12))
+
+snpTable <- importFromGATK(
+  file       = "results/filtered/filtered_combined.table",
+  highBulk   = HIGH_BULK,
+  lowBulk    = LOW_BULK,
+  chromList  = chromList
+)
+
+cat("Total SNPs loaded:", nrow(snpTable), "\n")
+
+# =============================================================================
+# 2. Filter SNPs for BSA
+# =============================================================================
+snpFiltered <- filterSNPs(
+  SNPset          = snpTable,
+  refAlleleFreq   = 0.20,       # Remove extreme reference allele frequencies
+  minTotalDepth   = 100,        # Minimum total depth across both bulks
+  maxTotalDepth   = 400,        # Maximum total depth
+  minSampleDepth  = 40,         # Minimum depth per bulk
+  minGQ           = 99,         # Minimum genotype quality
+  verbose         = TRUE
+)
+
+cat("SNPs retained after filtering:", nrow(snpFiltered), "\n")
+
+# =============================================================================
+# 3. Run ΔSNP-index analysis with G' statistic
+# =============================================================================
+snpAnalyzed <- runQTLseqAnalysis(
+  SNPset         = snpFiltered,
+  windowSize     = 2e6,         # 2 Mb sliding window
+  popStruc       = "F2",        # F2 population structure
+  bulkSize       = c(11, 9),    # Low bulk n=11, High bulk n=9
+  replications   = 10000,       # Simulation replications for CI
+  intervals      = c(95, 99)    # Confidence intervals to estimate
+)
+
+# =============================================================================
+# 4. Plot genome-wide ΔSNP-index
+# =============================================================================
+dir.create("results/figures", showWarnings = FALSE)
+
+# Genome-wide plot across all chromosomes
+p_genome <- plotQTLStats(
+  SNPset   = snpAnalyzed,
+  var      = "deltaSNP",
+  plotIntervals = TRUE
+)
+
+ggsave("results/figures/genome_wide_deltaSNP.png",
+       plot   = p_genome,
+       width  = 16,
+       height = 8,
+       dpi    = 300)
+
+# =============================================================================
+# 5. Plot SNP density across genome
+# =============================================================================
+p_density <- plotQTLStats(
+  SNPset = snpAnalyzed,
+  var    = "nSNPs"
+)
+
+ggsave("results/figures/snp_density.png",
+       plot   = p_density,
+       width  = 16,
+       height = 5,
+       dpi    = 300)
+
+# =============================================================================
+# 6. Plot candidate QTL regions (Ch02 and Ch05)
+# =============================================================================
+# Primary QTL - Spenn-ch02
+p_ch02 <- plotQTLStats(
+  SNPset        = snpAnalyzed,
+  var           = "deltaSNP",
+  plotIntervals = TRUE,
+  subset        = "Spenn-ch02"
+)
+
+ggsave("results/figures/candidate_QTL_ch02.png",
+       plot   = p_ch02,
+       width  = 8,
+       height = 5,
+       dpi    = 300)
+
+# Secondary QTL - Spenn-ch05
+p_ch05 <- plotQTLStats(
+  SNPset        = snpAnalyzed,
+  var           = "deltaSNP",
+  plotIntervals = TRUE,
+  subset        = "Spenn-ch05"
+)
+
+ggsave("results/figures/candidate_QTL_ch05.png",
+       plot   = p_ch05,
+       width  = 8,
+       height = 5,
+       dpi    = 300)
+
+# =============================================================================
+# 7. Export candidate QTL summary table
+# =============================================================================
+candidates <- getSNPindex(
+  SNPset    = snpAnalyzed,
+  intervalProb = 0.90,
+  increase  = TRUE
+)
+
+write.csv(candidates,
+          "results/figures/candidate_QTL_summary.csv",
+          row.names = FALSE)
+
+cat("\nAnalysis complete!\n")
+cat("Key candidate regions:\n")
+cat("Primary QTL:   Spenn-ch02 ~49.5 Mb (peak ΔSNP-index = +0.308)\n")
+cat("Secondary QTL: Spenn-ch05 ~57.6 Mb (peak ΔSNP-index = -0.293)\n")
+cat("Figures saved to results/figures/\n")
