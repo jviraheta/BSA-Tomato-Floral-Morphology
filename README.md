@@ -30,3 +30,28 @@ Confidence intervals estimated by simulation (10,000 replications, F2 population
 Candidate regions visualized in IGV
 Genome annotation accessed via Sol Genomics Network (SGN) JBrowse
 Gene distance calculations performed at peak SNP positions
+
+# Key Results
+
+| Parameter | Spenn-ch02 (Primary) | Spenn-ch05 (Secondary) |
+|---|---|---|
+| Peak SNP position | 49,548,378 bp | 57,626,400 bp |
+| Peak ΔSNP-index | +0.308 | −0.293 |
+| G' statistic | 14.27 | 11.65 |
+| REF allele | T | A |
+| ALT allele | G | C |
+| ALT freq. — High bulk | 0.438 | 0.596 |
+| ALT freq. — Low bulk | 0.115 | 0.889 |
+| Nearest gene | MYB67 (Sopen02g026690) | Hypothetical protein |
+| Distance to gene | 3,996 bp upstream | Within region |
+| Exceeds 90% CI | Yes | No (approaching) |
+
+The primary QTL on Spenn-ch02 contains MYB67, an R2R3-MYB transcription factor with established roles in petal epidermal cell morphology. The peak SNP falls in the proximal promoter region, suggesting promoter-region variation may drive differential MYB67 expression between the two species.
+
+# Tools & Dependencies
+| Tool | Version | Use |
+|---|---|---|
+|BWA-MEM | 4.x | SNP calling |
+| SAMtools | 1.x | BSA / ΔSNP-index analysis |
+| QTLseqr | 2.x | Variant visualization |
+| IGV | 4.x | Statistical analysis and plotting |
