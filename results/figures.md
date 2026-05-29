@@ -13,7 +13,7 @@
   - Low bulk (spindly): n = 11 (fusion ratio ≤ 0.32)
   - High bulk (webbed): n = 9 (fusion ratio ≥ 0.53)
 
-![Petal Fusion Histogram](results/figures/histogram_petal_fusion.png)
+<img width="827" height="462" alt="Screenshot 2026-05-28 at 11 02 47 PM" src="https://github.com/user-attachments/assets/1b719f0b-eb92-4e0f-a71e-382f7aa61580" />
 
 ---
 
@@ -25,7 +25,8 @@
 - SNP density broadly uniform across all 12 chromosomes
 - Highest density on Spenn-ch01 (5,522 SNPs), consistent with largest chromosome size
 
-![SNP Density](results/figures/snp_density.png)
+<img width="872" height="592" alt="Screenshot 2026-05-28 at 11 07 04 PM" src="https://github.com/user-attachments/assets/3d6f90c0-ad82-46fc-b845-6fc5163486f6" />
+
 
 ---
 
@@ -48,13 +49,14 @@ Genome-wide ΔSNP-index analysis identified **two candidate regions** with eleva
 
 > Neither region exceeded the 95% or 99% confidence thresholds, likely due to small bulk sizes. Both approached the 90% CI threshold (ΔSNP-index = ±0.304).
 
-![Genome-wide ΔSNP-index](results/figures/genome_wide_deltaSNP.png)
+<img width="773" height="520" alt="Screenshot 2026-05-28 at 11 06 36 PM" src="https://github.com/user-attachments/assets/bc2dd20b-3b77-4550-8f24-a3b8160cbf86" />
+
 
 ---
 
 ## 4. Candidate QTL Regions
 
-![Candidate QTL Ch02 and Ch05](results/figures/candidate_QTL_ch02_ch05.png)
+<img width="790" height="559" alt="Screenshot 2026-05-28 at 11 07 23 PM" src="https://github.com/user-attachments/assets/c6dc3db0-d7ac-4a28-bb6f-534defb16307" />
 
 ### Primary QTL — Spenn-ch02 (~49.5 Mb)
 - Elevated ΔSNP-index spanning ~47–51 Mb
